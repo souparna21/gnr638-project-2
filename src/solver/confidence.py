@@ -1,7 +1,7 @@
 from __future__ import annotations
 import os
 from .output_validator import ABSTAIN
-DEFAULT_TAU = 0.15
+DEFAULT_TAU = 0.1
 ENV_TAU_KEY = 'CONFIDENCE_TAU'
 
 def _resolve_tau(tau: float | None) -> float:
