@@ -10,13 +10,14 @@ from vllm.sampling_params import GuidedDecodingParams
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 MODEL_DIR = PROJECT_ROOT / 'models' / 'Qwen2.5-VL-7B-Instruct-AWQ'
-USER_PROMPT = 'This image shows a multiple choice question with four options labeled 1, 2, 3, and 4. Look at the image carefully and decide which option is correct. Reply with only a single digit: 1, 2, 3, or 4.'
+COT_PROMPT = 'This image shows a multiple choice question about deep learning with four options labeled 1, 2, 3, and 4. Read the question carefully, briefly reason about which option is correct, and conclude with the chosen option number.'
+ANSWER_PROMPT = 'Based on your reasoning above, output only the digit (1, 2, 3, or 4) of the correct option.'
 _DIGIT_TOKEN_IDS: dict[int, int] | None = None
 
 
 class Reasoner:
 
-    def __init__(self, max_tokens: int = 1) -> None:
+    def __init__(self, max_tokens: int = 128) -> None:
         self.max_tokens = max_tokens
         self.llm = self._load_model()
         self._warmup()
@@ -52,11 +53,17 @@ class Reasoner:
             return (5, 0.0)
         print(f'[{image_name}] solve start, image_size={image.size}', flush=True)
         try:
+            cot_sp = SamplingParams(max_tokens=self.max_tokens, temperature=0.0, seed=0)
+            cot_messages = [{'role': 'user', 'content': [{'type': 'image_pil', 'image_pil': image}, {'type': 'text', 'text': COT_PROMPT}]}]
+            print(f'[{image_name}] pass1 (CoT) calling llm.chat', flush=True)
+            cot_outputs = self.llm.chat(messages=cot_messages, sampling_params=cot_sp)
+            reasoning = cot_outputs[0].outputs[0].text.strip()
+            print(f'[{image_name}] pass1 reasoning_len={len(reasoning)} preview={reasoning[:120]!r}', flush=True)
             guided = GuidedDecodingParams(choice=['1', '2', '3', '4'])
-            sp = SamplingParams(max_tokens=1, temperature=0.0, seed=0, logprobs=5, guided_decoding=guided)
-            messages = [{'role': 'user', 'content': [{'type': 'image_pil', 'image_pil': image}, {'type': 'text', 'text': USER_PROMPT}]}]
-            print(f'[{image_name}] calling llm.chat', flush=True)
-            outputs = self.llm.chat(messages=messages, sampling_params=sp)
+            ans_sp = SamplingParams(max_tokens=1, temperature=0.0, seed=0, logprobs=5, guided_decoding=guided)
+            ans_messages = cot_messages + [{'role': 'assistant', 'content': reasoning}, {'role': 'user', 'content': ANSWER_PROMPT}]
+            print(f'[{image_name}] pass2 (answer) calling llm.chat', flush=True)
+            outputs = self.llm.chat(messages=ans_messages, sampling_params=ans_sp)
             print(f'[{image_name}] llm.chat returned, parsing', flush=True)
         except BaseException as exc:
             import traceback
